@@ -1,0 +1,6 @@
+# Direnv stuffs
+.direnv
+.envrc
+
+# Build Nix packages
+result
