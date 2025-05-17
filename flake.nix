@@ -1,45 +1,47 @@
 {
-  description = "A very basic flake";
+  description = "Custom packages for dealing with common Terraform operations";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
+    treefmt-nix.url = "github:numtide/treefmt-nix";
   };
 
-  outputs = { nixpkgs, flake-utils, ... }: 
-    flake-utils.lib.eachDefaultSystem (system:
-    let 
-      pkgs = nixpkgs.legacyPackages.${system};  
+  outputs =
+    {
+      self,
+      nixpkgs,
+      treefmt-nix,
+      ...
+    }:
+    let
+      supportedSystems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
+
+      forEachSupportedSystem =
+        f: nixpkgs.lib.genAttrs supportedSystems (system: f nixpkgs.legacyPackages.${system});
+
+      treefmt = forEachSupportedSystem (pkgs: treefmt-nix.lib.evalModule pkgs ./treefmt.nix);
     in
     {
-      packages.default = pkgs.writeShellApplication {
-        name = "terraform-update-git-refs";
-        text = ''
-          directory="$(pwd)"
-          module="*"
+      formatter = forEachSupportedSystem (pkgs: treefmt.${pkgs.system}.config.build.wrapper);
 
-          while getopts "d:m:" opt; do
-            case "$opt" in
-              d) directory="$OPTARG" ;;
-              m) module="$OPTARG" ;;
-              \?) echo "Invalid option: -$OPTARG" >&2; exit 1 ;;
-            esac
-          done
+      checks = forEachSupportedSystem (pkgs: {
+        formatting = treefmt.${pkgs.system}.config.build.check self;
+      });
 
-          shift $((OPTIND - 1))
+      packages = forEachSupportedSystem (pkgs: {
+        default = pkgs.symlinkJoin {
+          name = "terraform-tools";
+          paths = [
+            self.packages.${pkgs.system}.terraform-refplace
+          ];
+        };
 
-          if [ $# -lt 1 ]; then
-            echo "Please supply new ref"
-            exit 1
-          fi
-
-          ref="$1"
-
-          find "$directory" -type f -name "*.tf" | while read -r file; do
-            sed -E -i "s|source = \"([^\"]*/?$module\?ref=)([^\"]*)\"|source = \"\1$ref\"|" "$file"
-          done
-        '';
-      };
-    }
-  );
+        terraform-refplace = pkgs.callPackage ./pkgs/terraform-refplace.nix { };
+      });
+    };
 }
